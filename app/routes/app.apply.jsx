@@ -1,16 +1,16 @@
-import React, { useState } from 'react';
-import { Page, Layout, Card, Button, BlockStack, Text } from '@shopify/polaris';
-import { TitleBar } from '@shopify/app-bridge-react';
-import { useFetcher } from '@remix-run/react';
-import { json } from '@remix-run/node';
-import { authenticate } from '../shopify.server';
+import React, { useState } from "react";
+import { Page, Layout, Card, Button, BlockStack, Text } from "@shopify/polaris";
+import { TitleBar } from "@shopify/app-bridge-react";
+import { useFetcher } from "@remix-run/react";
+import { json } from "@remix-run/node";
+import { authenticate } from "../shopify.server";
 import database from "../db.server";
 
 export async function action({ request }) {
   const current_rate = await database.SaveRates.findFirst();
   if (!current_rate) {
     console.log("Gold and GST rate not updated");
-    return json({ error: 'No current rates found.' }, { status: 400 });
+    return json({ error: "No current rates found." }, { status: 400 });
   }
   try {
     const { admin } = await authenticate.admin(request);
@@ -20,53 +20,65 @@ export async function action({ request }) {
     let totalProductsUpdated = 0;
 
     while (hasNextPage) {
-      const response = await admin.graphql(`
-                query ($cursor: String) {
-                    products(first: 250, query: "tag:Gold_22K", after: $cursor) {
-                        edges {
-                            node {
-                                id
-                                tags
-                                variants(first: 1) {
-                                    nodes {
-                                        id
-                                        title
-                                        price
-                                    }
-                                }
-                                metafields(first: 10) {
-                                    edges {
-                                        node {
-                                            key
-                                            value
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        pageInfo {
-                            endCursor
-                            hasNextPage
-                        }
+      const response = await admin.graphql(
+        `
+          query ($cursor: String) {
+            products(first: 250, query: "tag:Gold_22K OR tag:Gold_18K", after: $cursor) {
+              edges {
+                node {
+                  id
+                  tags
+                  variants(first: 1) {
+                    nodes {
+                      id
+                      title
+                      price
                     }
+                  }
+                  metafields(first: 10) {
+                    edges {
+                      node {
+                        key
+                        value
+                      }
+                    }
+                  }
                 }
-            `, {
-        variables: {
-          cursor: endCursor
-        }
-      });
+              }
+              pageInfo {
+                endCursor
+                hasNextPage
+              }
+            }
+          }
+        `,
+        {
+          variables: {
+            cursor: endCursor,
+          },
+        },
+      );
 
       const result = await response.json();
 
-      // Ensure the result contains expected data
       if (!result.data || !result.data.products) {
         throw new Error("Unexpected API response structure");
       }
-      const gold22KProducts = result.data.products.edges;
+      const goldProducts = result.data.products.edges;
 
-      if (gold22KProducts.length > 0) {
-        for (const product of gold22KProducts) {
-          const { id, metafields, variants } = product.node;
+      if (goldProducts.length > 0) {
+        for (const product of goldProducts) {
+          const { id, metafields, variants, tags } = product.node;
+
+          // Determine gold rate based on tag
+          let goldRate = null;
+          if (tags.includes("Gold_22K")) {
+            goldRate = current_rate.goldRate22K;
+          } else if (tags.includes("Gold_18K")) {
+            goldRate = current_rate.goldRate18K;
+          } else {
+            continue; // skip if neither tag
+          }
 
           // Initialize variables to hold gold_weight and making_charges
           let goldWeight = null;
@@ -76,73 +88,87 @@ export async function action({ request }) {
           // Extract gold_weight, making_charges, and stone_price from the product metafields
           if (metafields && metafields.edges.length > 0) {
             metafields.edges.forEach(({ node: { key, value } }) => {
-              if (key === 'gold_weight') {
+              if (key === "gold_weight") {
                 goldWeight = parseFloat(value);
-              } else if (key === 'making_charges') {
+              } else if (key === "making_charges") {
                 makingCharges = parseFloat(value);
-              } else if (key === 'stone_price') {
+              } else if (key === "stone_price") {
                 stonePrice = parseFloat(value);
               }
             });
           }
 
           // Get the default variant ID
-          const variantId = variants.nodes.length > 0 ? variants.nodes[0].id : null;
+          const variantId =
+            variants.nodes.length > 0 ? variants.nodes[0].id : null;
 
           if (!variantId) {
             console.log(`No variant found for Product ID: ${id}`);
             continue; // Skip to the next product if no variant ID is found
           }
 
-          const goldRate = current_rate.goldRate;
-          // const gstRate = current_rate.gstRate;
           const gstRate = 3;
 
           const goldActualPrice = goldRate * goldWeight;
-          const goldMakingAmount = (stonePrice + goldActualPrice) * makingCharges / 100;
-          const gstAmount = (stonePrice + goldMakingAmount + goldActualPrice) * gstRate / 100;
-          const newPrice = Math.round(goldActualPrice + goldMakingAmount + stonePrice + gstAmount);
+          const goldMakingAmount =
+            ((stonePrice + goldActualPrice) * makingCharges) / 100;
+          const gstAmount =
+            ((stonePrice + goldMakingAmount + goldActualPrice) * gstRate) / 100;
+          const newPrice = Math.round(
+            goldActualPrice + goldMakingAmount + stonePrice + gstAmount,
+          );
 
           try {
             // Update the variant price using a GraphQL mutation
-            const updateResponse = await admin.graphql(`#graphql
-                            mutation UpdateProductVariantsPrices($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                                productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                                    productVariants {
-                                        id
-                                        price
-                                    }
-                                    userErrors {
-                                        field
-                                        message
-                                    }
-                                }
-                            }
-                        `, {
-              variables: {
-                productId: id, // Product ID
-                variants: [
-                  {
-                    id: variantId, // Variant ID
-                    price: newPrice // New price
+            const updateResponse = await admin.graphql(
+              `#graphql
+                mutation UpdateProductVariantsPrices($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                    productVariants {
+                      id
+                      price
+                    }
+                    userErrors {
+                      field
+                      message
+                    }
                   }
-                ]
-              }
-            });
+                }
+              `,
+              {
+                variables: {
+                  productId: id, // Product ID
+                  variants: [
+                    {
+                      id: variantId, // Variant ID
+                      price: newPrice, // New price
+                    },
+                  ],
+                },
+              },
+            );
 
             const updateResult = await updateResponse.json();
-            if (updateResult.data && !updateResult.data.productVariantsBulkUpdate.userErrors.length) {
+            if (
+              updateResult.data &&
+              !updateResult.data.productVariantsBulkUpdate.userErrors.length
+            ) {
               totalProductsUpdated++;
-              console.log(`Updated price for Product ID: ${id} with new Price: ${newPrice}`);
+              console.log(
+                `Updated price for Product ID: ${id} with new Price: ${newPrice}`,
+              );
             } else {
-              console.error(`Error updating Product ID: ${id}`, updateResult.data.productVariantsBulkUpdate.userErrors);
+              console.error(
+                `Error updating Product ID: ${id}`,
+                updateResult.data.productVariantsBulkUpdate.userErrors,
+              );
             }
           } catch (err) {
             console.error(`Error updating product ID ${id}:`, err.message);
           }
         }
       } else {
-        console.log("No products found with the tag 'Gold_22K'.");
+        console.log("No products found with the tag 'Gold_22K' or 'Gold_18K'.");
       }
 
       const pageInfo = result.data.products.pageInfo;
@@ -155,10 +181,12 @@ export async function action({ request }) {
     }
 
     // Return success status to update the button
-    return json({ success: true, message: 'All products successfully updated' });
-
+    return json({
+      success: true,
+      message: "All products successfully updated",
+    });
   } catch (err) {
-    console.error('Error during processing:', err.message);
+    console.error("Error during processing:", err.message);
     return json({ error: err.message });
   }
 }
@@ -196,11 +224,16 @@ export default function Apply() {
                 </Text>
                 <fetcher.Form method="post" onSubmit={handleSubmit}>
                   <p>
-                    Updating the gold product pricing will affect the product rate on the live website.
+                    Updating the gold product pricing will affect the product
+                    rate on the live website.
                   </p>
                   <br />
                   <Button variant="primary" submit loading={loading}>
-                    {success ? 'All products successfully updated' : loading ? 'Updating...' : 'Update'}
+                    {success
+                      ? "All products successfully updated"
+                      : loading
+                        ? "Updating..."
+                        : "Update"}
                   </Button>
                 </fetcher.Form>
               </BlockStack>

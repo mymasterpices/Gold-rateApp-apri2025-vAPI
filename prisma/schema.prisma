@@ -33,6 +33,9 @@ model Session {
 
 model SaveRates {
   id        Int  @id @default(autoincrement())
-  goldRate  Int?
+  goldRate22K  Int?
+  goldRate18K  Int?
+  goldRate14K  Int?
+  
 }
 
