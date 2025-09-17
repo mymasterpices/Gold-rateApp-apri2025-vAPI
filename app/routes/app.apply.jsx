@@ -72,9 +72,9 @@ export async function action({ request }) {
 
           // Determine gold rate based on tag
           let goldRate = null;
-          if (tags.includes("Gold_22K")) {
+          if (tags.includes("Gold_22K" || tags.includes("gold_22k"))) {
             goldRate = current_rate.goldRate22K;
-          } else if (tags.includes("Gold_18K")) {
+          } else if (tags.includes("Gold_18K") || tags.includes("gold_18k")) {
             goldRate = current_rate.goldRate18K;
           } else {
             continue; // skip if neither tag
