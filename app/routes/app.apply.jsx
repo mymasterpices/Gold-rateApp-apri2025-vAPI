@@ -90,9 +90,12 @@ export async function action({ request }) {
               if (key === "gold_weight") {
                 goldWeight = parseFloat(value) || 0;
               } else if (key === "making_charges") {
-                makingCharges = parseFloat(value) || 0; // stored as percentage (e.g. 15)
+                makingCharges = parseFloat(value) || 0;
               } else if (key === "stone_price") {
-                stonePrice = parseFloat(value) || 0;
+                stonePrice =
+                  value === null || value === undefined || value === ""
+                    ? 0
+                    : parseFloat(value) || 0;
               }
             });
           }
