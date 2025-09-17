@@ -12,6 +12,7 @@ export async function action({ request }) {
     console.log("Gold and GST rate not updated");
     return json({ error: "No current rates found." }, { status: 400 });
   }
+
   try {
     const { admin } = await authenticate.admin(request);
 
@@ -53,9 +54,7 @@ export async function action({ request }) {
           }
         `,
         {
-          variables: {
-            cursor: endCursor,
-          },
+          variables: { cursor: endCursor },
         },
       );
 
@@ -64,36 +63,36 @@ export async function action({ request }) {
       if (!result.data || !result.data.products) {
         throw new Error("Unexpected API response structure");
       }
+
       const goldProducts = result.data.products.edges;
 
       if (goldProducts.length > 0) {
         for (const product of goldProducts) {
           const { id, metafields, variants, tags } = product.node;
 
-          // Determine gold rate based on tag
+          // Determine gold rate based on tags
           let goldRate = null;
-          if (tags.includes("Gold_22K" || tags.includes("gold_22k"))) {
+          if (tags.includes("Gold_22K") || tags.includes("gold_22k")) {
             goldRate = current_rate.goldRate22K;
           } else if (tags.includes("Gold_18K") || tags.includes("gold_18k")) {
             goldRate = current_rate.goldRate18K;
           } else {
-            continue; // skip if neither tag
+            continue; // Skip if neither tag is present
           }
 
-          // Initialize variables to hold gold_weight and making_charges
-          let goldWeight = null;
-          let makingCharges = null;
-          let stonePrice = null;
+          // Extract metafields safely
+          let goldWeight = 0;
+          let makingCharges = 0;
+          let stonePrice = 0;
 
-          // Extract gold_weight, making_charges, and stone_price from the product metafields
           if (metafields && metafields.edges.length > 0) {
             metafields.edges.forEach(({ node: { key, value } }) => {
               if (key === "gold_weight") {
-                goldWeight = parseFloat(value);
+                goldWeight = parseFloat(value) || 0;
               } else if (key === "making_charges") {
-                makingCharges = parseFloat(value);
+                makingCharges = parseFloat(value) || 0; // stored as percentage (e.g. 15)
               } else if (key === "stone_price") {
-                stonePrice = parseFloat(value);
+                stonePrice = parseFloat(value) || 0;
               }
             });
           }
@@ -104,11 +103,13 @@ export async function action({ request }) {
 
           if (!variantId) {
             console.log(`No variant found for Product ID: ${id}`);
-            continue; // Skip to the next product if no variant ID is found
+            continue;
           }
 
+          // GST rate is fixed at 3%
           const gstRate = 3;
 
+          // Price calculations
           const goldActualPrice = goldRate * goldWeight;
           const goldMakingAmount =
             ((stonePrice + goldActualPrice) * makingCharges) / 100;
@@ -137,11 +138,11 @@ export async function action({ request }) {
               `,
               {
                 variables: {
-                  productId: id, // Product ID
+                  productId: id,
                   variants: [
                     {
-                      id: variantId, // Variant ID
-                      price: newPrice, // New price
+                      id: variantId,
+                      price: newPrice,
                     },
                   ],
                 },
@@ -155,11 +156,11 @@ export async function action({ request }) {
             ) {
               totalProductsUpdated++;
               console.log(
-                `Updated price for Product ID: ${id} with new Price: ${newPrice}`,
+                `✅ Updated Product ${id} with new Price: ₹${newPrice}`,
               );
             } else {
               console.error(
-                `Error updating Product ID: ${id}`,
+                `❌ Error updating Product ID: ${id}`,
                 updateResult.data.productVariantsBulkUpdate.userErrors,
               );
             }
@@ -168,7 +169,7 @@ export async function action({ request }) {
           }
         }
       } else {
-        console.log("No products found with the tag 'Gold_22K' or 'Gold_18K'.");
+        console.log("No products found with 'Gold_22K' or 'Gold_18K' tags.");
       }
 
       const pageInfo = result.data.products.pageInfo;
@@ -176,11 +177,10 @@ export async function action({ request }) {
       endCursor = pageInfo.endCursor;
 
       if (!hasNextPage) {
-        console.log("No more pages to fetch.");
+        console.log("✅ No more pages to fetch.");
       }
     }
 
-    // Return success status to update the button
     return json({
       success: true,
       message: "All products successfully updated",
@@ -201,7 +201,6 @@ export default function Apply() {
     setSuccess(false);
   };
 
-  // Watch fetcher to see when action completes successfully
   React.useEffect(() => {
     if (fetcher.data?.success) {
       setLoading(false);
