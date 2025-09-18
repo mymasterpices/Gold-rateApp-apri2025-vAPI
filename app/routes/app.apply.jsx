@@ -24,7 +24,11 @@ export async function action({ request }) {
       const response = await admin.graphql(
         `
           query ($cursor: String) {
-            products(first: 250, query: "tag:Gold_22K OR tag:Gold_18K", after: $cursor) {
+            products(
+              first: 250,
+              query: "tag:Gold_22K OR tag:gold_22k OR tag:GOLD_22K OR tag:Gold_22k OR tag:Gold_18K OR tag:gold_18k OR tag:GOLD_18K OR tag:Gold_18k",
+              after: $cursor
+            ) {
               edges {
                 node {
                   id
